@@ -3,13 +3,19 @@
  */
 package com.peer2gear.nutch.xquery;
 
+import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.io.InputStream;
+import java.io.StringReader;
+import java.io.StringWriter;
 import java.net.MalformedURLException;
 import java.net.URL;
+import java.net.URLConnection;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.regex.Matcher;
@@ -19,6 +25,17 @@ import javax.xml.namespace.NamespaceContext;
 import javax.xml.namespace.QName;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.transform.Result;
+import javax.xml.transform.Source;
+import javax.xml.transform.TransformerException;
+import javax.xml.transform.TransformerFactory;
+import javax.xml.transform.TransformerFactoryConfigurationError;
+import javax.xml.transform.dom.DOMResult;
+import javax.xml.transform.dom.DOMSource;
+import javax.xml.transform.sax.SAXTransformerFactory;
+import javax.xml.transform.sax.TransformerHandler;
+import javax.xml.transform.stream.StreamResult;
+import javax.xml.transform.stream.StreamSource;
 import javax.xml.xpath.XPath;
 import javax.xml.xpath.XPathConstants;
 import javax.xml.xpath.XPathExpression;
@@ -36,6 +53,12 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configurable;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.tika.metadata.Metadata;
+import org.apache.tika.parser.ParseContext;
+import org.apache.tika.parser.Parser;
+import org.apache.tika.parser.html.HtmlMapper;
+import org.apache.tika.parser.html.HtmlParser;
+import org.apache.tika.parser.html.IdentityHtmlMapper;
 import org.w3c.dom.Document;
 import org.w3c.dom.DocumentFragment;
 import org.w3c.dom.Element;
@@ -94,7 +117,21 @@ public class XQueryParser implements Configurable {
 		return this.conf;
 	}
 
-	/**
+    public String parseStream(InputStream input, String urlString)
+            throws Exception, MalformedURLException, XQException,
+            XPathExpressionException {
+        String resultStr;
+        DocumentFragment doc = parseHtml(input);
+        // resultStr = domToString(doc);
+        XPathExpression xpath = createXPath("/h:html/h:head/h:base/@href");
+        String baseUrlString = (String) xpath.evaluate(doc, XPathConstants.STRING);
+        if (baseUrlString == null)
+            baseUrlString = urlString;
+        resultStr = parse(doc, urlString, baseUrlString);
+        return resultStr;
+    }
+
+    /**
 	 * @param doc
 	 * @param urlStr
 	 * @param baseUrlStr
@@ -105,10 +142,7 @@ public class XQueryParser implements Configurable {
 	public String parse(DocumentFragment doc, String urlStr, String baseUrlStr)
 			throws MalformedURLException, XQException, XPathExpressionException {
 		String parseOutput = null;
-		XQPreparedExpression expr=null;// = this.matchURL(urlStr);
-		LinkedList<XQueryIdentifier> potentialExpressions = this.matchURL(urlStr);
-		if( potentialExpressions != null)
-			expr = this.matchXPath(potentialExpressions, doc);
+		XQPreparedExpression expr = match(doc, urlStr);
 
 		if (expr != null) {
 			expr.bindNode(XQConstants.CONTEXT_ITEM, doc, null);
@@ -125,6 +159,15 @@ public class XQueryParser implements Configurable {
 		return parseOutput;
 	}
 
+    public XQPreparedExpression match(DocumentFragment doc, String urlStr)
+            throws MalformedURLException, XPathExpressionException {
+        XQPreparedExpression expr=null;// = this.matchURL(urlStr);
+		LinkedList<XQueryIdentifier> potentialExpressions = this.matchURL(urlStr);
+		if( potentialExpressions != null)
+			expr = this.matchXPath(potentialExpressions, doc);
+        return expr;
+    }
+
 	public LinkedList<XQueryIdentifier> matchURL(String urlStr) throws MalformedURLException {
 		URL url = new URL(urlStr);
 		String domain = url.getHost();
@@ -140,7 +183,7 @@ public class XQueryParser implements Configurable {
 					res.add(pair);
 			}
 		}
-		if(res.size()== 0){
+		if(res.size() == 0) {
 			return null;
 		}		
 		return res;
@@ -196,13 +239,7 @@ public class XQueryParser implements Configurable {
 			String domain = rule.getAttribute("domain");
 			String patternStr = rule.getAttribute("pattern");
 			String xpathString = rule.getAttribute("xpath");
-			XPathExpression xp=null;
-			if(xpathString != null && !xpathString.equals("")){
-				XPath xpath =  XPathFactory.newInstance().newXPath();
-				// set namespace to http://www.w3.org/1999/xhtml
-				xpath.setNamespaceContext(new SimpleNamespaceContext());
-				xp = xpath.compile(xpathString);
-			}
+			XPathExpression xp = createXPath(xpathString);
 
 			String xquery = rule.getAttribute("xquery");
 			if (!this.rules.containsKey(domain))
@@ -217,11 +254,23 @@ public class XQueryParser implements Configurable {
 		}
 	}
 
-	private class SimpleNamespaceContext implements NamespaceContext{
-		public String getNamespaceURI(String prefix){
-			if(prefix != null && prefix.equals("h")){
+    private XPathExpression createXPath(String xpathString)
+            throws XPathExpressionException {
+        XPathExpression xp = null;
+        if (xpathString != null && !xpathString.equals("")) {
+        	XPath xpath =  XPathFactory.newInstance().newXPath();
+        	// set namespace to http://www.w3.org/1999/xhtml
+        	xpath.setNamespaceContext(new SimpleNamespaceContext());
+        	xp = xpath.compile(xpathString);
+        }
+        return xp;
+    }
+
+	private class SimpleNamespaceContext implements NamespaceContext {
+		public String getNamespaceURI(String prefix) {
+			if (prefix != null && prefix.equals("h")) {
 				return "http://www.w3.org/1999/xhtml";
-			}else{		    
+			} else {		    
 				return null;
 			}
 		}
@@ -244,4 +293,67 @@ public class XQueryParser implements Configurable {
 		return document;
 	}
 
+    public DocumentFragment parseHtml(InputStream input) throws Exception {
+    	SAXTransformerFactory tFactory = ((SAXTransformerFactory) TransformerFactory.newInstance());
+    	TransformerHandler handler = tFactory.newTransformerHandler();
+        StringWriter writer = new StringWriter();
+        Result result1 = new StreamResult(writer);
+    	handler.setResult(result1);
+    
+    	Metadata metadata = new Metadata();
+    	ParseContext parseContext = new ParseContext();
+    	parseContext.set(HtmlMapper.class, new IdentityHtmlMapper() {
+            @Override
+            public String mapSafeElement(String name) {
+                return name.toLowerCase(Locale.ENGLISH);
+            }			    
+    	});
+        Parser parser = new HtmlParser();
+    	parser.parse(input, handler, metadata, parseContext);
+    
+    	// FIXME: Got run time exceptions when parsing directly to the DOM fragment, therefore this extra parsing step 
+    	Source source = new StreamSource(new StringReader(writer.toString()));
+        writer.close();
+        DocumentFragment frag = DocumentBuilderFactory.newInstance().newDocumentBuilder().newDocument().createDocumentFragment();
+        Result result = new DOMResult(frag);
+        TransformerFactory.newInstance().newTransformer().transform(source, result);
+    
+        return frag;
+    }
+
+    public String domToString(DocumentFragment doc)
+            throws TransformerException, TransformerFactoryConfigurationError, IOException {
+        Source source = new DOMSource(doc);
+        StringWriter writer = new StringWriter();
+        Result result = new StreamResult(writer);
+        TransformerFactory.newInstance().newTransformer().transform(source, result);
+        writer.close();
+        return writer.toString();
+    }
+    
+    private static InputStream createContent(String urlStr)
+            throws FileNotFoundException, IOException {
+        URL url = new URL(urlStr);
+        URLConnection connection = url.openConnection();
+        InputStream is = connection.getInputStream();
+        return is;
+    }
+
+    private static void usage() {
+        System.err.println("Usage: XQueryParser <url>\n");           
+    }
+
+    public static void main(String[] args) throws Exception {
+        if (args.length < 1) {
+            usage();
+            return;
+        }
+        String urlStr = args[0];
+        XQueryParser xQueryParser = new XQueryParser();
+        Configuration conf = new Configuration();
+        xQueryParser.setConf(conf);
+        InputStream content = createContent(urlStr);                  
+        String result = xQueryParser.parseStream(content, urlStr);
+        System.out.println(result);
+    }
 }
