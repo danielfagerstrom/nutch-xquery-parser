@@ -217,10 +217,6 @@ public class XQueryParser implements Configurable {
 	private void parseRules() throws Exception {
 		String rulesFileName = this.getConf().get(XQUERYPARSER_RULES_FILE, "xquery/parse-rules.xml");
 		URL rulesResource = this.getConf().getResource(rulesFileName);
-		XQStaticContext ctx = this.xqConnection.getStaticContext();
-		// Use the directory of the rule file as base path for XQuery
-		ctx.setBaseURI(rulesResource.toString());
-		this.xqConnection.setStaticContext(ctx);
 		InputStream is = rulesResource.openStream();
 		Document document = this.readXMLDocument(is);
 		Element root = document.getDocumentElement();
@@ -228,6 +224,7 @@ public class XQueryParser implements Configurable {
 			if (LOG.isErrorEnabled()) { LOG.error("No parse-rules element."); }
 		}
 		NodeList rules = root.getChildNodes();
+        XQStaticContext ctx = this.xqConnection.getStaticContext();
 		for (int i = 0; i < rules.getLength(); i++) {
 			Node ruleNode = rules.item(i);
 			if (!(ruleNode instanceof Element))
@@ -246,7 +243,9 @@ public class XQueryParser implements Configurable {
 				this.rules.put(domain, new LinkedList<XQueryIdentifier>());
 			URL resolvedXQueryPath = rulesResource.toURI().resolve(xquery).toURL();
 			InputStream xqis = resolvedXQueryPath.openStream();
-			XQPreparedExpression expr = this.xqConnection.prepareExpression(xqis);
+	        // Use the directory of the xquery file as base path for XQuery
+	        ctx.setBaseURI(resolvedXQueryPath.toString());
+			XQPreparedExpression expr = this.xqConnection.prepareExpression(xqis, ctx);
 			Pattern pattern = Pattern.compile(patternStr);
 			this.rules.get(domain).add(new XQueryIdentifier(pattern, xp, expr));
 
