@@ -7,6 +7,8 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 
 import org.apache.commons.logging.Log;
@@ -32,10 +34,12 @@ import org.apache.nutch.util.HadoopFSUtil;
  *
  */
 public class XQueryParserJob extends Configured implements Tool {
-	private final static Log LOG = LogFactory.getLog(XQueryParserJob.class);
+	private static final String XQUERYPARSER_FILTER = "xqueryparser.filter";
+    private final static Log LOG = LogFactory.getLog(XQueryParserJob.class);
 
 	public static class XQueryMapper extends Mapper<Text, Content, Text, Text> {
 		XQueryParser xQueryParser;
+		Pattern filter;
 		
 		@Override
 		protected void setup(Context context) throws IOException,
@@ -43,6 +47,9 @@ public class XQueryParserJob extends Configured implements Tool {
 			super.setup(context);
 			xQueryParser = new XQueryParser();
 			xQueryParser.setConf(context.getConfiguration());
+			String filterString = context.getConfiguration().get(XQUERYPARSER_FILTER);
+			if (filterString != null)
+			    filter = Pattern.compile(filterString);
 		}
 
 		@Override
@@ -51,16 +58,26 @@ public class XQueryParserJob extends Configured implements Tool {
 			String resultStr = null;
 			InputStream input = new ByteArrayInputStream(content.getContent());
             String urlString = key.toString();
+            if (filter != null) {
+                Matcher matcher = filter.matcher(urlString);
+                if (!matcher.matches()) {
+                    if (LOG.isDebugEnabled()) { LOG.debug("Ignore: " + urlString); }
+                    return;
+                }
+            }
+            if (LOG.isInfoEnabled()) { LOG.info("Parsing: " + urlString); }
 			try {
                 resultStr = xQueryParser.parseStream(input, urlString);
 			} catch (Exception e) {
 				if (LOG.isErrorEnabled()) { LOG.error(e.getMessage()); }
 				e.printStackTrace();
-				throw new RuntimeException(e.getMessage(), e);      
+				//throw new RuntimeException(e.getMessage(), e);      
 			} finally {
 				input.close();
 			}
-			context.write(key, new Text(resultStr));
+			if (resultStr != null && !"".equals(resultStr)) {
+	            context.write(key, new Text(resultStr));			    
+			}
 		}
 
 	}
@@ -97,13 +114,14 @@ public class XQueryParserJob extends Configured implements Tool {
 	@Override
 	public int run(String[] args) throws Exception {
 		if (args.length < 2) {
-			System.err.printf("Usage: %s [generic options] (<segment> ... | -dir <segments>) <output>\n",
+			System.err.printf("Usage: %s [generic options] [-filter <regexp on url>] (<segment> ... | -dir <segments>) <output>\n",
 					getClass().getSimpleName());
 			ToolRunner.printGenericCommandUsage(System.err);
 			return -1;
 		}
 
 		ArrayList<Path> inPaths = new ArrayList<Path>();
+		String filter = null;
 		for (int i = 0; i < args.length - 1; i++) {
 			if ("-dir".equals(args[i])) {
 		        Path dir = new Path(args[++i]);
@@ -114,6 +132,9 @@ public class XQueryParserJob extends Configured implements Tool {
 		        for (Path segment: segments) {
 		        	inPaths.add(new Path(segment, Content.DIR_NAME));
 		        }
+			} else if ("-filter".equals(args[i])) {
+			    filter = args[++i];
+			    getConf().set(XQUERYPARSER_FILTER, filter);
 			} else {
 	        	inPaths.add(new Path(args[i], Content.DIR_NAME));
 			}
