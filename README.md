@@ -34,7 +34,7 @@ Execute
 
 On a segment directory:
 
-	java -jar target/nutch-utils-1.0-SNAPSHOT-jar-with-dependencies.jar -libjars <conf dir> -D xqueryparser.rules.file=xquery/parse-rules.xml <segment dir(s)> <result dir>
+	java -jar target/nutch-xquery-parser-1.0-SNAPSHOT-jar-with-dependencies.jar -libjars <conf dir> -D xqueryparser.rules.file=xquery/parse-rules.xml <segment dir(s)> <result dir>
 
 On a sigle URL:
 
