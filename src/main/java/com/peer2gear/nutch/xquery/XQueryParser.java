@@ -217,6 +217,9 @@ public class XQueryParser implements Configurable {
 	private void parseRules() throws Exception {
 		String rulesFileName = this.getConf().get(XQUERYPARSER_RULES_FILE, "xquery/parse-rules.xml");
 		URL rulesResource = this.getConf().getResource(rulesFileName);
+        if (null == rulesFileName) {
+            if (LOG.isErrorEnabled()) { LOG.error("The rules file cannot be found in the class loader: " + rulesFileName); }
+        }
 		InputStream is = rulesResource.openStream();
 		Document document = this.readXMLDocument(is);
 		Element root = document.getDocumentElement();
