@@ -13,7 +13,11 @@ This is configured in an XML file.
 Build
 -----
 
-Download Nutch 1.4
+**Note**: Maven 3.X is required to build nutch-xquery-parser
+
+Download from http://maven.apache.org/download.html
+
+### Download Nutch 1.4
 
 	bin/get-parse-html.sh
 	
